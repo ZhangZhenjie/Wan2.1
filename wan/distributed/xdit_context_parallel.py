@@ -203,6 +203,13 @@ def usp_attn_forward(self,
     q = rope_apply(q, grid_sizes, freqs)
     k = rope_apply(k, grid_sizes, freqs)
 
+    q = q.to(dtype)
+    k = k.to(q.dtype)
+    v = v.to(q.dtype)
+
+    assert q.dtype == k.dtype == v.dtype, f"[Dtype Mismatch] q={q.dtype}, k={k.dtype}, v={v.dtype}"
+
+
     # TODO: We should use unpaded q,k,v for attention.
     # k_lens = seq_lens // get_sequence_parallel_world_size()
     # if k_lens is not None:

@@ -550,6 +550,8 @@ class WanVAE_(nn.Module):
         else:
             z = z / scale[1] + scale[0]
         iter_ = z.shape[2]
+        z = z.to(self.conv2.weight.dtype) # ensure input matches weight dtype
+        print(f"z dtype: {z.dtype}, conv2.weight dtype: {self.conv2.weight.dtype}, conv2.bias dtype: {self.conv2.bias.dtype}")
         x = self.conv2(z)
         for i in range(iter_):
             self._conv_idx = [0]
@@ -650,14 +652,56 @@ class WanVAE:
         """
         with amp.autocast(dtype=self.dtype):
             return [
-                self.model.encode(u.unsqueeze(0), self.scale).float().squeeze(0)
+                self.model.encode(u.unsqueeze(0).to(self.device), self.scale).float().squeeze(0)
                 for u in videos
             ]
 
     def decode(self, zs):
-        with amp.autocast(dtype=self.dtype):
-            return [
-                self.model.decode(u.unsqueeze(0),
-                                  self.scale).float().clamp_(-1, 1).squeeze(0)
-                for u in zs
-            ]
+        """
+        zs: A list of latent tensors each with shape [C, T, H, W].
+        """
+        with torch.no_grad():
+            with amp.autocast(dtype=self.dtype):
+                results = []
+                for z in zs:
+                    # Move input to correct device
+                    z = z.to(self.device)
+
+                    # Get model's expected dtype from conv2 parameters
+                    target_dtype = self.model.conv2.weight.dtype
+
+                    # Convert scale tensors to match model's dtype
+                    scale_0 = self.scale[0].to(device=self.device, dtype=target_dtype)
+                    scale_1 = self.scale[1].to(device=self.device, dtype=target_dtype)
+
+                    # Process the input tensor
+                    z = z.to(dtype=target_dtype)
+                    z = z / scale_1.view(1, self.model.z_dim, 1, 1, 1) + scale_0.view(1, self.model.z_dim, 1, 1, 1)
+
+                    # Clear cache and process through model
+                    self.model.clear_cache()
+                    x = self.model.conv2(z)
+
+                    # Process through decoder frame by frame
+                    iter_ = z.shape[2]
+                    for i in range(iter_):
+                        self.model._conv_idx = [0]
+                        if i == 0:
+                            out = self.model.decoder(
+                                x[:, :, i:i + 1, :, :],
+                                feat_cache=self.model._feat_map,
+                                feat_idx=self.model._conv_idx
+                            )
+                        else:
+                            out_ = self.model.decoder(
+                                x[:, :, i:i + 1, :, :],
+                                feat_cache=self.model._feat_map,
+                                feat_idx=self.model._conv_idx
+                            )
+                            out = torch.cat([out, out_], 2)
+
+                    # Convert output to float32 and clamp
+                    results.append(out.float().clamp_(-1, 1).squeeze(0))
+                    self.model.clear_cache()
+
+                return results

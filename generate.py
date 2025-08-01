@@ -243,6 +243,11 @@ def _parse_args():
         type=float,
         default=5.0,
         help="Classifier free guidance scale.")
+    parser.add_argument(
+        "--low_vram_mode",
+        action="store_true",
+        default=False,
+        help="Enable memory-saving mode with fp16, xformers, chunking, etc.")
 
     args = parser.parse_args()
 
@@ -423,6 +428,7 @@ def generate(args):
             dit_fsdp=args.dit_fsdp,
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
+            low_vram_mode=args.low_vram_mode,
         )
 
         logging.info("Generating video ...")
